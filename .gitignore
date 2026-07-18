@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Dataset
+data/
+
+# Training outputs
+checkpoints/
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Model weights
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Editors / OS
+.vscode/
+Thumbs.db
