@@ -227,9 +227,8 @@ class TrainingConfig:
     log_every_steps: int = 20
 
     log_dir: Path = field(
-        default_factory=lambda: (
-            PROJECT_ROOT
-            / "logs"
+        default_factory=lambda: Path(
+            "/content/drive/MyDrive/ViOCR/logs"
         )
     )
 
@@ -238,13 +237,12 @@ class TrainingConfig:
     # ========================================================
 
     output_dir: Path = field(
-        default_factory=lambda: (
-            PROJECT_ROOT
-            / "checkpoints"
+        default_factory=lambda: Path(
+            "/content/drive/MyDrive/ViOCR/checkpoints"
         )
     )
 
-    save_every_steps: int = 1000
+    save_every_steps: int = 500
 
     save_every_epoch: bool = True
 
@@ -264,7 +262,9 @@ class TrainingConfig:
     # RESUME TRAINING
     # ========================================================
 
-    resume_from_checkpoint: Path | None = None
+    resume_from_checkpoint: Path | None = Path(
+    "/content/drive/MyDrive/ViOCR/checkpoints/interrupted_checkpoint"
+    )
 
     # ========================================================
     # REPRODUCIBILITY
