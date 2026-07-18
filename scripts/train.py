@@ -609,6 +609,10 @@ def build_grad_scaler(
     return torch.amp.GradScaler(
         device="cuda",
         enabled=config.use_grad_scaler,
+        init_scale=config.grad_scaler_init_scale,
+        growth_factor=config.grad_scaler_growth_factor,
+        backoff_factor=config.grad_scaler_backoff_factor,
+        growth_interval=config.grad_scaler_growth_interval,
     )
 
 
@@ -1241,12 +1245,25 @@ def train_one_epoch(
             )
 
         if not torch.isfinite(raw_loss):
-            raise RuntimeError(
-                "Training loss là NaN hoặc Infinity.\n"
-                f"Epoch: {epoch}\n"
-                f"Batch: {batch_index}\n"
-                f"Images: {batch['image_paths']}"
+            optimizer.zero_grad(set_to_none=True)
+
+            message = (
+                "Training loss là NaN hoặc Infinity "
+                f"| epoch {epoch} "
+                f"| batch {batch_index} "
+                f"| images {batch.get('image_paths')}"
             )
+
+            del outputs
+            del raw_loss
+            del loss_for_backward
+            del model_batch
+
+            if config.skip_non_finite_steps:
+                print(f"WARNING: {message}. Skipping batch.")
+                continue
+
+            raise RuntimeError(message)
 
         raw_loss_value = float(
             raw_loss.detach().item()
@@ -1295,19 +1312,90 @@ def train_one_epoch(
                 else grad_norm
             )
 
-            if not math.isfinite(grad_norm_value):
-                raise RuntimeError(
-                    "Gradient norm là NaN hoặc Infinity.\n"
-                    f"Epoch: {epoch}\n"
-                    f"Batch: {batch_index}"
+            gradient_is_finite = math.isfinite(
+                grad_norm_value
+            )
+
+            if (
+                not gradient_is_finite
+                and not config.use_grad_scaler
+            ):
+                optimizer.zero_grad(set_to_none=True)
+
+                message = (
+                    "Gradient norm là NaN hoặc Infinity "
+                    f"| epoch {epoch} "
+                    f"| batch {batch_index}"
                 )
 
+                if config.skip_non_finite_steps:
+                    print(f"WARNING: {message}. Skipping step.")
+                    del outputs
+                    del raw_loss
+                    del loss_for_backward
+                    del model_batch
+                    continue
+
+                raise RuntimeError(message)
+
+            previous_scale = float(
+                scaler.get_scale()
+            )
+
+            # Khi GradScaler phát hiện Inf/NaN, scaler.step() tự động
+            # bỏ qua optimizer.step(). scaler.update() sau đó giảm scale.
             scaler.step(optimizer)
             scaler.update()
+
+            current_scale = float(
+                scaler.get_scale()
+            )
 
             optimizer.zero_grad(
                 set_to_none=True
             )
+
+            optimizer_step_skipped = (
+                config.use_grad_scaler
+                and current_scale < previous_scale
+            )
+
+            if optimizer_step_skipped:
+                message = (
+                    "FP16 overflow; optimizer step was skipped "
+                    f"| epoch {epoch} "
+                    f"| batch {batch_index} "
+                    f"| grad {grad_norm_value} "
+                    f"| scale {previous_scale:g} -> {current_scale:g}"
+                )
+
+                if config.skip_non_finite_steps:
+                    print(f"WARNING: {message}")
+                    del outputs
+                    del raw_loss
+                    del loss_for_backward
+                    del model_batch
+                    continue
+
+                raise RuntimeError(message)
+
+            if not gradient_is_finite:
+                message = (
+                    "Gradient norm không hữu hạn nhưng GradScaler "
+                    "không báo đã bỏ qua optimizer step "
+                    f"| epoch {epoch} "
+                    f"| batch {batch_index}"
+                )
+
+                if config.skip_non_finite_steps:
+                    print(f"WARNING: {message}")
+                    del outputs
+                    del raw_loss
+                    del loss_for_backward
+                    del model_batch
+                    continue
+
+                raise RuntimeError(message)
 
             scheduler.step()
 
