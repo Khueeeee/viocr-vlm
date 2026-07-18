@@ -263,7 +263,7 @@ class TrainingConfig:
     # ========================================================
 
     resume_from_checkpoint: Path | None = Path(
-    "/content/drive/MyDrive/ViOCR/checkpoints/interrupted_checkpoint"
+    "/content/drive/MyDrive/ViOCR/checkpoints/checkpoint-step-2000"
     )
 
     # ========================================================
@@ -300,10 +300,6 @@ class TrainingConfig:
         self.output_dir = Path(self.output_dir)
         self.log_dir = Path(self.log_dir)
 
-        if self.resume_from_checkpoint is not None:
-            self.resume_from_checkpoint = Path(
-                self.resume_from_checkpoint
-            )
 
         self._validate_model_config()
         self._validate_data_config()
