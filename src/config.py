@@ -268,12 +268,12 @@ class TrainingConfig:
     # DEBUG / DEVELOPMENT
     # ========================================================
 
-    debug: bool = True
+    debug: bool = False
 
-    max_train_samples: int | None = 8
-    max_val_samples: int | None = 4
+    max_train_samples = None
+    max_val_samples = None
 
-    num_epochs: int = 1
+    num_epochs: int = 5
 
     gradient_accumulation_steps: int = 2
 
