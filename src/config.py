@@ -183,6 +183,16 @@ class TrainingConfig:
     # Dùng AMP khi chạy CUDA và precision phù hợp.
     use_amp: bool = True
 
+    # GradScaler cho FP16. Scale khởi tạo thấp giúp Florence-2 ổn định
+    # hơn trên GPU T4/RTX khi bắt đầu huấn luyện.
+    grad_scaler_init_scale: float = 256.0
+    grad_scaler_growth_factor: float = 2.0
+    grad_scaler_backoff_factor: float = 0.5
+    grad_scaler_growth_interval: int = 2000
+
+    # Khi FP16 overflow, bỏ qua optimizer step đó thay vì dừng toàn bộ.
+    skip_non_finite_steps: bool = True
+
     # ========================================================
     # MEMORY OPTIMIZATION
     # ========================================================
@@ -208,7 +218,7 @@ class TrainingConfig:
 
     # Giới hạn số batch validation để test nhanh.
     # None nghĩa là chạy toàn bộ validation set.
-    max_validation_batches: int | None = None
+    max_validation_batches: int | None = 500
 
     # ========================================================
     # LOGGING
@@ -270,19 +280,9 @@ class TrainingConfig:
 
     debug: bool = False
 
-    max_train_samples = None
-    max_val_samples = None
-
-    num_epochs: int = 5
-
-    gradient_accumulation_steps: int = 2
-
-    log_every_steps: int = 1
-
-    save_every_steps: int = 100
-    validate_every_steps: int = 2
-
-    max_validation_batches: int | None = 2
+    # None nghĩa là dùng toàn bộ dữ liệu.
+    max_train_samples: int | None = None
+    max_val_samples: int | None = None
 
 
     # ========================================================
@@ -481,6 +481,26 @@ class TrainingConfig:
             raise ValueError(
                 "Không được bật đồng thời "
                 "use_fp16 và use_bf16."
+            )
+
+        if self.grad_scaler_init_scale <= 0:
+            raise ValueError(
+                "grad_scaler_init_scale phải lớn hơn 0."
+            )
+
+        if self.grad_scaler_growth_factor <= 1.0:
+            raise ValueError(
+                "grad_scaler_growth_factor phải lớn hơn 1."
+            )
+
+        if not 0.0 < self.grad_scaler_backoff_factor < 1.0:
+            raise ValueError(
+                "grad_scaler_backoff_factor phải thuộc khoảng (0, 1)."
+            )
+
+        if self.grad_scaler_growth_interval <= 0:
+            raise ValueError(
+                "grad_scaler_growth_interval phải lớn hơn 0."
             )
 
     def _validate_validation_config(self) -> None:
