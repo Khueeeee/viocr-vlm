@@ -60,6 +60,10 @@ class TrainingState:
     global_step: int = 0
     micro_step: int = 0
 
+    # Batch cuối cùng đã hoàn tất an toàn trong epoch hiện tại.
+    # Chỉ cập nhật sau optimizer step thành công.
+    resume_batch_index: int = 0
+
     best_val_loss: float = math.inf
 
     total_optimizer_steps: int = 0
@@ -287,10 +291,14 @@ def build_dataloaders(
         max_target_length=config.max_target_length,
     )
 
+    train_generator = torch.Generator()
+    train_generator.manual_seed(config.seed)
+
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=config.train_batch_size,
         shuffle=True,
+        generator=train_generator,
         num_workers=config.num_workers,
         pin_memory=config.resolved_pin_memory,
         persistent_workers=(
@@ -848,6 +856,7 @@ def save_checkpoint(
     state: TrainingState,
     config: TrainingConfig,
     current_epoch: int,
+    epoch_completed: bool = False,
 ) -> None:
     """
     Lưu adapter, processor và trainer state.
@@ -872,9 +881,11 @@ def save_checkpoint(
 
     trainer_state = {
         "epoch": current_epoch,
+        "epoch_completed": epoch_completed,
         "start_epoch": state.start_epoch,
         "global_step": state.global_step,
         "micro_step": state.micro_step,
+        "resume_batch_index": state.resume_batch_index,
         "best_val_loss": state.best_val_loss,
         "last_train_loss": state.last_train_loss,
         "last_val_loss": state.last_val_loss,
@@ -911,6 +922,7 @@ def load_training_state(
     scheduler: Any,
     scaler: torch.amp.GradScaler,
     device: torch.device,
+    number_of_batches: int,
 ) -> TrainingState:
     """
     Nạp optimizer, scheduler, scaler và các bộ đếm.
@@ -947,17 +959,56 @@ def load_training_state(
     if scaler_state:
         scaler.load_state_dict(scaler_state)
 
-    completed_epoch = int(
-        saved_state.get("epoch", 0)
+    saved_epoch = max(
+        int(saved_state.get("epoch", 1)),
+        1,
     )
 
+    epoch_completed = bool(
+        saved_state.get("epoch_completed", False)
+    )
+
+    saved_micro_step = int(
+        saved_state.get("micro_step", 0)
+    )
+
+    saved_resume_batch_index = saved_state.get(
+        "resume_batch_index"
+    )
+
+    # Tương thích checkpoint cũ chưa lưu resume_batch_index.
+    if saved_resume_batch_index is None:
+        saved_resume_batch_index = (
+            saved_micro_step % number_of_batches
+            if number_of_batches > 0
+            else 0
+        )
+
+    saved_resume_batch_index = int(
+        saved_resume_batch_index
+    )
+
+    if epoch_completed:
+        start_epoch = saved_epoch + 1
+        saved_resume_batch_index = 0
+    else:
+        start_epoch = saved_epoch
+
+    if not 0 <= saved_resume_batch_index <= number_of_batches:
+        raise ValueError(
+            "resume_batch_index không hợp lệ: "
+            f"{saved_resume_batch_index}; "
+            f"train loader có {number_of_batches} batch."
+        )
+
     state = TrainingState(
-        start_epoch=completed_epoch,
+        start_epoch=start_epoch,
         global_step=int(
             saved_state.get("global_step", 0)
         ),
-        micro_step=int(
-            saved_state.get("micro_step", 0)
+        micro_step=saved_micro_step,
+        resume_batch_index=(
+            saved_resume_batch_index
         ),
         best_val_loss=float(
             saved_state.get(
@@ -977,11 +1028,15 @@ def load_training_state(
     print("=" * 70)
     print("RESUME STATE")
     print("=" * 70)
-    print(
-        f"Completed epoch: {completed_epoch}"
-    )
+    print(f"Saved epoch: {saved_epoch}")
+    print(f"Epoch completed: {epoch_completed}")
     print(
         f"Continue from epoch: {state.start_epoch}"
+    )
+    print(
+        "Resume after batch: "
+        f"{state.resume_batch_index:,}/"
+        f"{number_of_batches:,}"
     )
     print(
         f"Global optimizer step: "
@@ -1193,6 +1248,36 @@ def train_one_epoch(
 
     number_of_batches = len(train_loader)
 
+    # Dùng permutation cố định cho từng epoch.
+    loader_generator = getattr(
+        train_loader,
+        "generator",
+        None,
+    )
+
+    if loader_generator is not None:
+        loader_generator.manual_seed(
+            config.seed + epoch
+        )
+
+    resume_batch_index = 0
+
+    if epoch == state.start_epoch:
+        resume_batch_index = (
+            state.resume_batch_index
+        )
+    else:
+        state.resume_batch_index = 0
+
+    if resume_batch_index > 0:
+        print("=" * 70)
+        print(f"RESUME EPOCH {epoch}")
+        print(
+            f"Skip {resume_batch_index:,} "
+            "batch(es) already completed."
+        )
+        print("=" * 70)
+
     print()
     print("=" * 70)
     print(
@@ -1206,6 +1291,8 @@ def train_one_epoch(
         train_loader,
         start=1,
     ):
+        if batch_index <= resume_batch_index:
+            continue
         state.micro_step += 1
 
         group_size = calculate_group_size(
@@ -1400,6 +1487,9 @@ def train_one_epoch(
             scheduler.step()
 
             state.global_step += 1
+            state.resume_batch_index = (
+                batch_index
+            )
             state.last_train_loss = (
                 raw_loss_value
             )
@@ -1560,6 +1650,8 @@ def train_one_epoch(
     )
 
     state.last_train_loss = average_epoch_loss
+    state.resume_batch_index = 0
+    state.start_epoch = epoch + 1
 
     print()
     print(
@@ -1699,6 +1791,7 @@ def train(
             scheduler=scheduler,
             scaler=scaler,
             device=config.device,
+            number_of_batches=len(train_loader),
         )
 
         state.total_optimizer_steps = (
@@ -1736,6 +1829,8 @@ def train(
 
     print_gpu_memory()
 
+    current_epoch = state.start_epoch
+
     try:
         with CSVTrainingLogger(
             log_path=log_path,
@@ -1745,6 +1840,8 @@ def train(
                 state.start_epoch,
                 config.num_epochs + 1,
             ):
+                current_epoch = epoch
+
                 train_one_epoch(
                     model=model,
                     processor=processor,
@@ -1840,9 +1937,10 @@ def train(
             state=state,
             config=config,
             current_epoch=max(
-                state.start_epoch,
+                current_epoch,
                 1,
             ),
+            epoch_completed=False,
         )
 
         raise
