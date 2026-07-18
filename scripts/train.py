@@ -10,7 +10,7 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import torch
 from peft import PeftModel
@@ -60,8 +60,8 @@ class TrainingState:
     global_step: int = 0
     micro_step: int = 0
 
-    # Batch cuối cùng đã hoàn tất an toàn trong epoch hiện tại.
-    # Chỉ cập nhật sau optimizer step thành công.
+    # Batch cuối cùng đã hoàn tất an toàn bằng optimizer step
+    # trong epoch hiện tại.
     resume_batch_index: int = 0
 
     best_val_loss: float = math.inf
@@ -80,10 +80,6 @@ class TrainingState:
 class CSVTrainingLogger:
     """
     Ghi lịch sử train và validation vào file CSV.
-
-    File mặc định:
-
-        logs/train_log.csv
     """
 
     FIELDNAMES = [
@@ -107,15 +103,10 @@ class CSVTrainingLogger:
         append: bool = False,
     ) -> None:
         self.log_path = Path(log_path)
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.log_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        file_exists = self.log_path.exists()
         file_has_content = (
-            file_exists
+            self.log_path.exists()
             and self.log_path.stat().st_size > 0
         )
 
@@ -156,15 +147,12 @@ class CSVTrainingLogger:
             allocated_gb = (
                 torch.cuda.memory_allocated() / 1024**3
             )
-
             reserved_gb = (
                 torch.cuda.memory_reserved() / 1024**3
             )
 
         row = {
-            "timestamp": time.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "event": event,
             "epoch": epoch,
             "micro_step": micro_step,
@@ -189,15 +177,9 @@ class CSVTrainingLogger:
                 if grad_norm is not None
                 else ""
             ),
-            "gpu_allocated_gb": (
-                f"{allocated_gb:.4f}"
-            ),
-            "gpu_reserved_gb": (
-                f"{reserved_gb:.4f}"
-            ),
-            "elapsed_seconds": (
-                f"{elapsed_seconds:.2f}"
-            ),
+            "gpu_allocated_gb": f"{allocated_gb:.4f}",
+            "gpu_reserved_gb": f"{reserved_gb:.4f}",
+            "elapsed_seconds": f"{elapsed_seconds:.2f}",
         }
 
         self.writer.writerow(row)
@@ -208,7 +190,7 @@ class CSVTrainingLogger:
             self.file.flush()
             self.file.close()
 
-    def __enter__(self) -> CSVTrainingLogger:
+    def __enter__(self) -> "CSVTrainingLogger":
         return self
 
     def __exit__(
@@ -235,10 +217,7 @@ def limit_dataset(
     if max_samples is None:
         return dataset
 
-    number_of_samples = min(
-        max_samples,
-        len(dataset),
-    )
+    number_of_samples = min(max_samples, len(dataset))
 
     return Subset(
         dataset,
@@ -301,9 +280,7 @@ def build_dataloaders(
         generator=train_generator,
         num_workers=config.num_workers,
         pin_memory=config.resolved_pin_memory,
-        persistent_workers=(
-            config.resolved_persistent_workers
-        ),
+        persistent_workers=config.resolved_persistent_workers,
         drop_last=config.drop_last_train_batch,
         collate_fn=collator,
     )
@@ -317,30 +294,17 @@ def build_dataloaders(
             shuffle=False,
             num_workers=config.num_workers,
             pin_memory=config.resolved_pin_memory,
-            persistent_workers=(
-                config.resolved_persistent_workers
-            ),
+            persistent_workers=config.resolved_persistent_workers,
             drop_last=False,
             collate_fn=collator,
         )
 
-    print(
-        f"Train samples: {len(train_dataset):,}"
-    )
-    print(
-        f"Train batches per epoch: "
-        f"{len(train_loader):,}"
-    )
+    print(f"Train samples: {len(train_dataset):,}")
+    print(f"Train batches per epoch: {len(train_loader):,}")
 
     if val_dataset is not None and val_loader is not None:
-        print(
-            f"Validation samples: "
-            f"{len(val_dataset):,}"
-        )
-        print(
-            f"Validation batches: "
-            f"{len(val_loader):,}"
-        )
+        print(f"Validation samples: {len(val_dataset):,}")
+        print(f"Validation batches: {len(val_loader):,}")
     else:
         print("Validation disabled.")
 
@@ -365,18 +329,10 @@ def enable_training_memory_optimizations(
         if model_config is not None:
             model_config.use_cache = False
 
-        base_model = getattr(
-            model,
-            "base_model",
-            None,
-        )
+        base_model = getattr(model, "base_model", None)
 
         if base_model is not None:
-            base_config = getattr(
-                base_model,
-                "config",
-                None,
-            )
+            base_config = getattr(base_model, "config", None)
 
             if base_config is not None:
                 base_config.use_cache = False
@@ -437,9 +393,7 @@ def build_model(
                 model_name=config.model_name,
                 device=config.device,
                 dtype=config.model_dtype,
-                trust_remote_code=(
-                    config.trust_remote_code
-                ),
+                trust_remote_code=config.trust_remote_code,
                 training=True,
             )
         else:
@@ -450,12 +404,8 @@ def build_model(
                 rank=config.lora_rank,
                 alpha=config.lora_alpha,
                 dropout=config.lora_dropout,
-                target_modules=(
-                    config.lora_target_modules
-                ),
-                trust_remote_code=(
-                    config.trust_remote_code
-                ),
+                target_modules=config.lora_target_modules,
+                trust_remote_code=config.trust_remote_code,
             )
     else:
         if not config.use_lora:
@@ -464,10 +414,7 @@ def build_model(
                 "Full fine-tuning chưa được hỗ trợ."
             )
 
-        checkpoint_dir = (
-            config.resume_from_checkpoint
-        )
-
+        checkpoint_dir = config.resume_from_checkpoint
         adapter_dir = checkpoint_dir / "adapter"
 
         if not adapter_dir.exists():
@@ -476,23 +423,17 @@ def build_model(
                 f"{adapter_dir}"
             )
 
-        print(
-            "Loading base Florence-2 model for resume..."
-        )
+        print("Loading base Florence-2 model for resume...")
 
         base_model = load_florence_model(
             model_name=config.model_name,
             device=config.device,
             dtype=config.model_dtype,
-            trust_remote_code=(
-                config.trust_remote_code
-            ),
+            trust_remote_code=config.trust_remote_code,
             training=True,
         )
 
-        print(
-            f"Loading LoRA adapter: {adapter_dir}"
-        )
+        print(f"Loading LoRA adapter: {adapter_dir}")
 
         model = PeftModel.from_pretrained(
             base_model,
@@ -536,18 +477,13 @@ def build_optimizer(
             "Không có parameter nào có thể huấn luyện."
         )
 
-    optimizer = AdamW(
+    return AdamW(
         params=trainable_parameters,
         lr=config.learning_rate,
-        betas=(
-            config.adam_beta1,
-            config.adam_beta2,
-        ),
+        betas=(config.adam_beta1, config.adam_beta2),
         eps=config.adam_epsilon,
         weight_decay=config.weight_decay,
     )
-
-    return optimizer
 
 
 def calculate_training_steps(
@@ -593,14 +529,12 @@ def build_scheduler(
     Tạo learning-rate scheduler của Transformers.
     """
 
-    scheduler = get_scheduler(
+    return get_scheduler(
         name=config.scheduler_name,
         optimizer=optimizer,
         num_warmup_steps=warmup_steps,
         num_training_steps=total_optimizer_steps,
     )
-
-    return scheduler
 
 
 # ============================================================
@@ -614,8 +548,14 @@ def build_grad_scaler(
     GradScaler chỉ thực sự bật khi dùng CUDA FP16.
     """
 
+    scaler_device = (
+        "cuda"
+        if config.device.type == "cuda"
+        else "cpu"
+    )
+
     return torch.amp.GradScaler(
-        device="cuda",
+        device=scaler_device,
         enabled=config.use_grad_scaler,
         init_scale=config.grad_scaler_init_scale,
         growth_factor=config.grad_scaler_growth_factor,
@@ -648,9 +588,7 @@ def autocast_context(
 def get_current_learning_rate(
     optimizer: torch.optim.Optimizer,
 ) -> float:
-    return float(
-        optimizer.param_groups[0]["lr"]
-    )
+    return float(optimizer.param_groups[0]["lr"])
 
 
 def calculate_group_size(
@@ -661,8 +599,7 @@ def calculate_group_size(
     """
     Trả số micro-batch trong nhóm gradient accumulation hiện tại.
 
-    Việc này giúp nhóm cuối epoch không bị chia loss sai khi số batch
-    không chia hết cho gradient_accumulation_steps.
+    Nhóm cuối epoch có thể nhỏ hơn gradient_accumulation_steps.
     """
 
     zero_based_index = batch_index - 1
@@ -735,72 +672,70 @@ def validate(
     )
     print("-" * 70)
 
-    for batch_index, batch in enumerate(
-        val_loader,
-        start=1,
-    ):
-        if (
-            config.max_validation_batches is not None
-            and batch_index
-            > config.max_validation_batches
+    try:
+        for batch_index, batch in enumerate(
+            val_loader,
+            start=1,
         ):
-            break
+            if (
+                config.max_validation_batches is not None
+                and batch_index
+                > config.max_validation_batches
+            ):
+                break
 
-        model_batch = move_batch_to_device(
-            batch=batch,
-            device=config.device,
-            pixel_dtype=config.model_dtype,
-        )
-
-        with autocast_context(config):
-            outputs = model(
-                input_ids=model_batch["input_ids"],
-                attention_mask=(
-                    model_batch["attention_mask"]
-                ),
-                pixel_values=(
-                    model_batch["pixel_values"]
-                ),
-                labels=model_batch["labels"],
+            model_batch = move_batch_to_device(
+                batch=batch,
+                device=config.device,
+                pixel_dtype=config.model_dtype,
             )
 
-            loss = outputs.loss
+            with autocast_context(config):
+                outputs = model(
+                    input_ids=model_batch["input_ids"],
+                    attention_mask=model_batch["attention_mask"],
+                    pixel_values=model_batch["pixel_values"],
+                    labels=model_batch["labels"],
+                )
 
-        if not torch.isfinite(loss):
-            raise RuntimeError(
-                "Validation loss là NaN hoặc Infinity "
-                f"tại batch {batch_index}."
+                loss = outputs.loss
+
+            if not torch.isfinite(loss):
+                raise RuntimeError(
+                    "Validation loss là NaN hoặc Infinity "
+                    f"tại batch {batch_index}."
+                )
+
+            batch_size = int(
+                model_batch["input_ids"].shape[0]
             )
 
-        batch_size = int(
-            model_batch["input_ids"].shape[0]
-        )
-
-        total_weighted_loss += (
-            float(loss.detach().item())
-            * batch_size
-        )
-
-        total_samples += batch_size
-
-        if (
-            batch_index % 100 == 0
-            or batch_index == number_of_batches
-        ):
-            running_loss = (
-                total_weighted_loss
-                / max(total_samples, 1)
+            total_weighted_loss += (
+                float(loss.detach().item())
+                * batch_size
             )
+            total_samples += batch_size
 
-            print(
-                f"Validation batch "
-                f"{batch_index:,}/{number_of_batches:,} "
-                f"| loss={running_loss:.6f}"
-            )
+            if (
+                batch_index % 100 == 0
+                or batch_index == number_of_batches
+            ):
+                running_loss = (
+                    total_weighted_loss
+                    / max(total_samples, 1)
+                )
 
-        del outputs
-        del loss
-        del model_batch
+                print(
+                    f"Validation batch "
+                    f"{batch_index:,}/{number_of_batches:,} "
+                    f"| loss={running_loss:.6f}"
+                )
+
+            del outputs
+            del loss
+            del model_batch
+    finally:
+        model.train()
 
     if total_samples == 0:
         raise RuntimeError(
@@ -811,11 +746,7 @@ def validate(
         total_weighted_loss / total_samples
     )
 
-    model.train()
-
-    print(
-        f"Validation loss: {average_loss:.6f}"
-    )
+    print(f"Validation loss: {average_loss:.6f}")
 
     return average_loss
 
@@ -875,9 +806,7 @@ def save_checkpoint(
         safe_serialization=True,
     )
 
-    processor.save_pretrained(
-        processor_dir,
-    )
+    processor.save_pretrained(processor_dir)
 
     trainer_state = {
         "epoch": current_epoch,
@@ -889,15 +818,9 @@ def save_checkpoint(
         "best_val_loss": state.best_val_loss,
         "last_train_loss": state.last_train_loss,
         "last_val_loss": state.last_val_loss,
-        "optimizer_state_dict": (
-            optimizer.state_dict()
-        ),
-        "scheduler_state_dict": (
-            scheduler.state_dict()
-        ),
-        "scaler_state_dict": (
-            scaler.state_dict()
-        ),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "scaler_state_dict": scaler.state_dict(),
     }
 
     torch.save(
@@ -910,9 +833,7 @@ def save_checkpoint(
         checkpoint_dir / "training_config.json",
     )
 
-    print(
-        f"Checkpoint saved: {checkpoint_dir}"
-    )
+    print(f"Checkpoint saved: {checkpoint_dir}")
 
 
 def load_training_state(
@@ -1007,20 +928,18 @@ def load_training_state(
             saved_state.get("global_step", 0)
         ),
         micro_step=saved_micro_step,
-        resume_batch_index=(
-            saved_resume_batch_index
-        ),
+        resume_batch_index=saved_resume_batch_index,
         best_val_loss=float(
             saved_state.get(
                 "best_val_loss",
                 math.inf,
             )
         ),
-        last_train_loss=(
-            saved_state.get("last_train_loss")
+        last_train_loss=saved_state.get(
+            "last_train_loss"
         ),
-        last_val_loss=(
-            saved_state.get("last_val_loss")
+        last_val_loss=saved_state.get(
+            "last_val_loss"
         ),
     )
 
@@ -1030,9 +949,7 @@ def load_training_state(
     print("=" * 70)
     print(f"Saved epoch: {saved_epoch}")
     print(f"Epoch completed: {epoch_completed}")
-    print(
-        f"Continue from epoch: {state.start_epoch}"
-    )
+    print(f"Continue from epoch: {state.start_epoch}")
     print(
         "Resume after batch: "
         f"{state.resume_batch_index:,}/"
@@ -1085,9 +1002,10 @@ def remove_old_checkpoints(
     best_model và last_checkpoint không bị xóa.
     """
 
-    checkpoints = find_step_checkpoints(
-        output_dir
-    )
+    if max_checkpoints_to_keep <= 0:
+        return
+
+    checkpoints = find_step_checkpoints(output_dir)
 
     number_to_remove = (
         len(checkpoints)
@@ -1116,7 +1034,7 @@ def replace_directory(
     destination_dir: Path,
 ) -> None:
     """
-    Sao chép checkpoint vào alias như best_model hoặc last_checkpoint.
+    Sao chép checkpoint vào alias như last_checkpoint.
     """
 
     if destination_dir.exists():
@@ -1145,7 +1063,16 @@ def run_validation_and_checkpoint_if_needed(
     current_epoch: int,
     csv_logger: CSVTrainingLogger,
     training_start_time: float,
+    epoch_completed: bool = False,
 ) -> float | None:
+    """
+    Chạy validation và lưu best_model nếu kết quả tốt hơn.
+
+    epoch_completed:
+        False -> validation giữa epoch.
+        True  -> validation sau khi hoàn thành toàn bộ epoch.
+    """
+
     if not config.run_validation:
         return None
 
@@ -1208,6 +1135,7 @@ def run_validation_and_checkpoint_if_needed(
             state=state,
             config=config,
             current_epoch=current_epoch,
+            epoch_completed=epoch_completed,
         )
 
     return val_loss
@@ -1237,7 +1165,6 @@ def train_one_epoch(
     """
 
     model.train()
-
     optimizer.zero_grad(set_to_none=True)
 
     total_weighted_loss = 0.0
@@ -1280,9 +1207,7 @@ def train_one_epoch(
 
     print()
     print("=" * 70)
-    print(
-        f"EPOCH {epoch}/{config.num_epochs}"
-    )
+    print(f"EPOCH {epoch}/{config.num_epochs}")
     print("=" * 70)
 
     epoch_start_time = time.perf_counter()
@@ -1293,6 +1218,7 @@ def train_one_epoch(
     ):
         if batch_index <= resume_batch_index:
             continue
+
         state.micro_step += 1
 
         group_size = calculate_group_size(
@@ -1316,20 +1242,13 @@ def train_one_epoch(
         with autocast_context(config):
             outputs = model(
                 input_ids=model_batch["input_ids"],
-                attention_mask=(
-                    model_batch["attention_mask"]
-                ),
-                pixel_values=(
-                    model_batch["pixel_values"]
-                ),
+                attention_mask=model_batch["attention_mask"],
+                pixel_values=model_batch["pixel_values"],
                 labels=model_batch["labels"],
             )
 
             raw_loss = outputs.loss
-
-            loss_for_backward = (
-                raw_loss / group_size
-            )
+            loss_for_backward = raw_loss / group_size
 
         if not torch.isfinite(raw_loss):
             optimizer.zero_grad(set_to_none=True)
@@ -1366,9 +1285,7 @@ def train_one_epoch(
         )
         interval_sample_count += batch_size
 
-        scaler.scale(
-            loss_for_backward
-        ).backward()
+        scaler.scale(loss_for_backward).backward()
 
         perform_step = should_optimizer_step(
             batch_index=batch_index,
@@ -1383,19 +1300,14 @@ def train_one_epoch(
         if perform_step:
             scaler.unscale_(optimizer)
 
-            grad_norm = (
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    max_norm=config.max_grad_norm,
-                )
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                max_norm=config.max_grad_norm,
             )
 
             grad_norm_value = float(
                 grad_norm.detach().item()
-                if isinstance(
-                    grad_norm,
-                    torch.Tensor,
-                )
+                if isinstance(grad_norm, torch.Tensor)
                 else grad_norm
             )
 
@@ -1425,22 +1337,16 @@ def train_one_epoch(
 
                 raise RuntimeError(message)
 
-            previous_scale = float(
-                scaler.get_scale()
-            )
+            previous_scale = float(scaler.get_scale())
 
-            # Khi GradScaler phát hiện Inf/NaN, scaler.step() tự động
-            # bỏ qua optimizer.step(). scaler.update() sau đó giảm scale.
+            # Với FP16, GradScaler tự bỏ qua optimizer.step()
+            # khi phát hiện Inf/NaN.
             scaler.step(optimizer)
             scaler.update()
 
-            current_scale = float(
-                scaler.get_scale()
-            )
+            current_scale = float(scaler.get_scale())
 
-            optimizer.zero_grad(
-                set_to_none=True
-            )
+            optimizer.zero_grad(set_to_none=True)
 
             optimizer_step_skipped = (
                 config.use_grad_scaler
@@ -1453,7 +1359,8 @@ def train_one_epoch(
                     f"| epoch {epoch} "
                     f"| batch {batch_index} "
                     f"| grad {grad_norm_value} "
-                    f"| scale {previous_scale:g} -> {current_scale:g}"
+                    f"| scale {previous_scale:g} -> "
+                    f"{current_scale:g}"
                 )
 
                 if config.skip_non_finite_steps:
@@ -1487,12 +1394,8 @@ def train_one_epoch(
             scheduler.step()
 
             state.global_step += 1
-            state.resume_batch_index = (
-                batch_index
-            )
-            state.last_train_loss = (
-                raw_loss_value
-            )
+            state.resume_batch_index = batch_index
+            state.last_train_loss = raw_loss_value
 
             if (
                 state.global_step
@@ -1501,10 +1404,7 @@ def train_one_epoch(
             ):
                 interval_average_loss = (
                     interval_loss_sum
-                    / max(
-                        interval_sample_count,
-                        1,
-                    )
+                    / max(interval_sample_count, 1)
                 )
 
                 learning_rate = (
@@ -1538,22 +1438,12 @@ def train_one_epoch(
                 csv_logger.log(
                     event="train",
                     epoch=epoch,
-                    micro_step=(
-                        state.micro_step
-                    ),
-                    global_step=(
-                        state.global_step
-                    ),
-                    train_loss=(
-                        interval_average_loss
-                    ),
+                    micro_step=state.micro_step,
+                    global_step=state.global_step,
+                    train_loss=interval_average_loss,
                     val_loss=None,
-                    learning_rate=(
-                        learning_rate
-                    ),
-                    grad_norm=(
-                        grad_norm_value
-                    ),
+                    learning_rate=learning_rate,
+                    grad_norm=grad_norm_value,
                     elapsed_seconds=elapsed,
                 )
 
@@ -1575,9 +1465,7 @@ def train_one_epoch(
                 )
 
                 save_checkpoint(
-                    checkpoint_dir=(
-                        checkpoint_dir
-                    ),
+                    checkpoint_dir=checkpoint_dir,
                     model=model,
                     processor=processor,
                     optimizer=optimizer,
@@ -1586,22 +1474,19 @@ def train_one_epoch(
                     state=state,
                     config=config,
                     current_epoch=epoch,
+                    epoch_completed=False,
                 )
 
                 remove_old_checkpoints(
-                    output_dir=(
-                        config.output_dir
-                    ),
+                    output_dir=config.output_dir,
                     max_checkpoints_to_keep=(
-                        config
-                        .max_checkpoints_to_keep
+                        config.max_checkpoints_to_keep
                     ),
                 )
 
             if (
                 config.run_validation
-                and config.validate_every_steps
-                > 0
+                and config.validate_every_steps > 0
                 and state.global_step
                 % config.validate_every_steps
                 == 0
@@ -1617,14 +1502,12 @@ def train_one_epoch(
                     state=state,
                     current_epoch=epoch,
                     csv_logger=csv_logger,
-                    training_start_time=(
-                        training_start_time
-                    ),
+                    training_start_time=training_start_time,
+                    epoch_completed=False,
                 )
 
         if (
-            config.empty_cuda_cache_every_steps
-            > 0
+            config.empty_cuda_cache_every_steps > 0
             and state.micro_step
             % config.empty_cuda_cache_every_steps
             == 0
@@ -1725,11 +1608,9 @@ def train(
 
     print("Processor loaded.")
 
-    train_loader, val_loader = (
-        build_dataloaders(
-            config=config,
-            processor=processor,
-        )
+    train_loader, val_loader = build_dataloaders(
+        config=config,
+        processor=processor,
     )
 
     (
@@ -1753,9 +1634,7 @@ def train(
         f"Total optimizer steps: "
         f"{total_optimizer_steps:,}"
     )
-    print(
-        f"Warmup steps: {warmup_steps:,}"
-    )
+    print(f"Warmup steps: {warmup_steps:,}")
 
     model = build_model(config)
 
@@ -1767,26 +1646,20 @@ def train(
     scheduler = build_scheduler(
         optimizer=optimizer,
         config=config,
-        total_optimizer_steps=(
-            total_optimizer_steps
-        ),
+        total_optimizer_steps=total_optimizer_steps,
         warmup_steps=warmup_steps,
     )
 
     scaler = build_grad_scaler(config)
 
     state = TrainingState(
-        total_optimizer_steps=(
-            total_optimizer_steps
-        ),
+        total_optimizer_steps=total_optimizer_steps,
         warmup_steps=warmup_steps,
     )
 
     if config.resume_from_checkpoint is not None:
         state = load_training_state(
-            checkpoint_dir=(
-                config.resume_from_checkpoint
-            ),
+            checkpoint_dir=config.resume_from_checkpoint,
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
@@ -1807,8 +1680,7 @@ def train(
         return
 
     config_snapshot_path = (
-        config.log_dir
-        / "training_config.json"
+        config.log_dir / "training_config.json"
     )
 
     save_json(
@@ -1816,13 +1688,10 @@ def train(
         config_snapshot_path,
     )
 
-    log_path = (
-        config.log_dir / "train_log.csv"
-    )
+    log_path = config.log_dir / "train_log.csv"
 
     append_log = (
-        config.resume_from_checkpoint
-        is not None
+        config.resume_from_checkpoint is not None
     )
 
     training_start_time = time.perf_counter()
@@ -1854,9 +1723,7 @@ def train(
                     state=state,
                     epoch=epoch,
                     csv_logger=csv_logger,
-                    training_start_time=(
-                        training_start_time
-                    ),
+                    training_start_time=training_start_time,
                 )
 
                 if (
@@ -1874,9 +1741,8 @@ def train(
                         state=state,
                         current_epoch=epoch,
                         csv_logger=csv_logger,
-                        training_start_time=(
-                            training_start_time
-                        ),
+                        training_start_time=training_start_time,
+                        epoch_completed=True,
                     )
 
                 if config.save_every_epoch:
@@ -1886,9 +1752,7 @@ def train(
                     )
 
                     save_checkpoint(
-                        checkpoint_dir=(
-                            epoch_checkpoint_dir
-                        ),
+                        checkpoint_dir=epoch_checkpoint_dir,
                         model=model,
                         processor=processor,
                         optimizer=optimizer,
@@ -1897,6 +1761,7 @@ def train(
                         state=state,
                         config=config,
                         current_epoch=epoch,
+                        epoch_completed=True,
                     )
 
                     last_checkpoint_dir = (
@@ -1905,12 +1770,8 @@ def train(
                     )
 
                     replace_directory(
-                        source_dir=(
-                            epoch_checkpoint_dir
-                        ),
-                        destination_dir=(
-                            last_checkpoint_dir
-                        ),
+                        source_dir=epoch_checkpoint_dir,
+                        destination_dir=last_checkpoint_dir,
                     )
 
                 clear_cuda_cache()
@@ -1936,10 +1797,7 @@ def train(
             scaler=scaler,
             state=state,
             config=config,
-            current_epoch=max(
-                current_epoch,
-                1,
-            ),
+            current_epoch=max(current_epoch, 1),
             epoch_completed=False,
         )
 
@@ -1974,9 +1832,7 @@ def train(
         f"Total time: "
         f"{total_elapsed / 3600:.2f} hours"
     )
-    print(
-        f"Checkpoints: {config.output_dir}"
-    )
+    print(f"Checkpoints: {config.output_dir}")
     print(f"Training log: {log_path}")
 
     print_gpu_memory()
