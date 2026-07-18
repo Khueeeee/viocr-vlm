@@ -952,7 +952,7 @@ def load_training_state(
     )
 
     state = TrainingState(
-        start_epoch=completed_epoch + 1,
+        start_epoch=completed_epoch,
         global_step=int(
             saved_state.get("global_step", 0)
         ),
